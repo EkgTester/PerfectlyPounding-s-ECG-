@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PerfectlyPounding's ECG</title>
+    <!-- MQTT.js library -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        body {
+            background-color: #050505;
+            color: #c9d1d9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 980px;
+            width: 100%;
+            text-align: center;
+        }
+        h2 { color: #ff66b2; margin-bottom: 5px; font-family: monospace; letter-spacing: 1px; }
+        .status { font-size: 14px; margin-bottom: 15px; color: #8b949e; }
+        
+        .top-panel {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        .panel-box {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            background: #111;
+            padding: 10px 16px;
+            border-radius: 8px;
+            border: 1px solid #222;
+            transition: border-color 0.3s ease;
+        }
+        .heart-icon {
+            color: #ff3333;
+            font-size: 24px;
+        }
+        .heart-icon.beating {
+            animation: pulse 1s infinite;
+        }
+        .panel-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #ff66b2;
+            font-family: monospace;
+            transition: color 0.3s ease;
+        }
+        .zone-value {
+            font-size: 16px;
+            font-weight: bold;
+            color: #ff66b2;
+            font-family: monospace;
+            letter-spacing: 0.5px;
+            transition: color 0.3s ease;
+        }
+        .panel-label {
+            font-size: 13px;
+            color: #8b949e;
+        }
+
+        /* Extra stats bar (HRV & Session Timer) */
+        .extra-panel {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        .extra-box {
+            background: #111;
+            padding: 8px 14px;
+            border-radius: 6px;
+            border: 1px solid #222;
+            font-size: 13px;
+            color: #8b949e;
+            font-family: monospace;
+        }
+        .extra-box span { color: #ff66b2; font-weight: bold; }
+
+        /* Time in Zones Bar */
+        .zones-breakdown {
+            width: 100%;
+            background: #111;
+            border: 1px solid #222;
+            border-radius: 6px;
+            padding: 10px 15px;
+            margin-top: 12px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .zones-bar-title {
+            font-size: 12px;
+            color: #8b949e;
+            text-align: left;
+            font-family: monospace;
+        }
+        .zones-bar-track {
+            display: flex;
+            height: 10px;
+            background: #222;
+            border-radius: 5px;
+            overflow: hidden;
+            width: 100%;
+            gap: 1px;
+        }
+        .zone-seg { height: 100%; transition: width 0.3s ease; }
+
+        .audio-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #111;
+            padding: 12px 15px;
+            border-radius: 8px;
+            border: 1px solid #222;
+            font-size: 14px;
+            color: #8b949e;
+        }
+        .audio-container input {
+            cursor: pointer;
+            width: 18px;
+            height: 18px;
+            accent-color: #ff66b2;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); }
+        }
+
+        canvas#ecgCanvas {
+            background-color: #000000;
+            border: 2px solid #222;
+            border-radius: 6px;
+            width: 100%;
+            height: 260px;
+            box-shadow: 0 0 20px rgba(255, 102, 178, 0.15);
+            transition: box-shadow 0.3s ease;
+            display: block;
+        }
+        canvas#trendCanvas {
+            background-color: #050005;
+            border: 2px solid #222;
+            border-radius: 6px;
+            width: 100%;
+            height: 110px;
+            margin-top: 12px;
+            display: block;
+        }
+        button {
+            background-color: #db2777;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover { background-color: #be185d; }
+        button:disabled { background-color: #222; cursor: not-allowed; color: #555; }
+        .share-box {
+            display: none;
+            background: #111;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #222;
+            margin-top: 15px;
+            text-align: left;
+        }
+        .share-box input {
+            width: 75%;
+            padding: 8px;
+            background: #000;
+            border: 1px solid #333;
+            color: #ff66b2;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: monospace;
+        }
+        /* Transparent mode for OBS (?obs=1) */
+        body.obs-mode { background: transparent; padding: 0; }
+        body.obs-mode .controls, body.obs-mode h2, body.obs-mode .status, body.obs-mode .share-box, body.obs-mode .audio-container { display: none !important; }
+        body.obs-mode canvas#ecgCanvas { border: none; background: transparent; box-shadow: none; }
+        body.obs-mode canvas#trendCanvas { border: none; background: rgba(0, 0, 0, 0.45); }
+        body.obs-mode .panel-box, body.obs-mode .extra-box, body.obs-mode .zones-breakdown { background: rgba(0, 0, 0, 0.6); border: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>PerfectlyPounding's ECG</h2>
+    <div class="status" id="statusText">Connecting to MQTT Broker...</div>
+
+    <div class="top-panel">
+        <div class="panel-box">
+            <span class="heart-icon" id="heartIcon">❤️</span>
+            <span class="panel-value" id="bpmVal">--</span>
+            <span class="panel-label">BPM</span>
+        </div>
+
+        <div class="panel-box" id="zoneBox">
+            <span class="zone-value" id="zoneVal">--</span>
+        </div>
+
+        <div class="panel-box">
+            <span class="panel-value" id="maxBpmVal">--</span>
+            <span class="panel-label">MAX</span>
+        </div>
+
+        <div class="panel-box">
+            <span class="panel-value" id="rrVal">--</span>
+            <span class="panel-label">ms R-R</span>
+        </div>
+
+        <div class="panel-box">
+            <span class="panel-value" id="calVal">0</span>
+            <span class="panel-label">KCAL</span>
+        </div>
+
+        <div class="audio-container">
+            <input type="checkbox" id="audioToggle">
+            <label for="audioToggle">Beep Sound</label>
+        </div>
+    </div>
+
+    <!-- Extra panel for Session Duration, HRV and Time in Zones -->
+    <div class="extra-panel">
+        <div class="extra-box">Session: <span id="sessionTimer">00:00</span></div>
+        <div class="extra-box">HRV (RMSSD): <span id="hrvVal">--</span> ms</div>
+        <div class="extra-box">Stress Index: <span id="stressVal">--</span></div>
+    </div>
+
+    <div class="controls" id="streamerControls">
+        <button id="connectBtn" onclick="connectPolar()">Connect Polar H10 (Streamer)</button>
+    </div>
+
+    <canvas id="ecgCanvas" width="900" height="260"></canvas>
+    <canvas id="trendCanvas" width="900" height="110"></canvas>
+
+    <div class="zones-breakdown">
+        <div class="zones-bar-title">TIME IN ZONES BREAKDOWN</div>
+        <div class="zones-bar-track" id="zonesBarTrack">
+            <!-- Segments filled dynamically -->
+        </div>
+    </div>
+
+    <div class="share-box" id="shareBox">
+        <p style="margin: 0 0 8px 0; font-size: 14px;">Permanent Viewer Link (or append <b>&obs=1</b> for OBS):</p>
+        <input type="text" id="shareUrl" readonly>
+        <button style="padding: 8px 14px; font-size: 14px;" onclick="copyLink()">Copy</button>
+    </div>
+</div>
+
+<script>
+    const HR_SERVICE = "0000180d-0000-1000-8000-00805f9b34fb";
+    const HR_MEASUREMENT = "00002a37-0000-1000-8000-00805f9b34fb";
+    const PMD_SERVICE = "fb005c80-02e7-f387-1cad-8acd2d8df0c8";
+    const PMD_CONTROL = "fb005c81-02e7-f387-1cad-8acd2d8df0c8";
+    const PMD_DATA    = "fb005c82-02e7-f387-1cad-8acd2d8df0c8";
+    const START_ECG_CMD = new Uint8Array([0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00]);
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomParam = urlParams.get('room');
+    const isObs = urlParams.get('obs') === '1';
+    if (isObs) document.body.classList.add('obs-mode');
+
+    const streamId = roomParam || 'perfectlypounding';
+    const mqttEcgTopic = `live/polar/ecg/${streamId}`;
+    const mqttBpmTopic = `live/polar/bpm/${streamId}`;
+    const mqttRrTopic  = `live/polar/rr/${streamId}`;
+    const mqttStateTopic = `live/polar/state/${streamId}`;
+
+    const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+
+    const canvas = document.getElementById('ecgCanvas');
+    const ctx = canvas.getContext('2d');
+
+    const trendCanvas = document.getElementById('trendCanvas');
+    const trendCtx = trendCanvas.getContext('2d');
+
+    let sampleQueue = [];
+    let ecgPublishBuffer = []; 
+    let screenData = new Array(canvas.width).fill(500);
+    let sweepCursor = 0;
+    const sweepSpeed = 2;
+
+    const MAX_HISTORY = 300;
+    let bpmHistory = new Array(MAX_HISTORY).fill(null);
+    let zoneTimeCounts = { Z0: 0, Z1: 0, Z2: 0, Z3: 0, Z4: 0, Z5: 0 };
+    let rrBuffer = [];
+
+    let lastPacketTime = 0;
+    let isConnected = false;
+    let currentBpm = 0;
+    let maxBpm = 0;
+    let totalCalories = 0;
+    let sessionSeconds = 0;
+    let activeLineColor = '#ff3399';
+
+    function getZoneDetails(bpm) {
+        if (bpm <= 0) return { key: 'Z0', label: '--', color: '#ff3399' };
+        if (bpm < 98)  return { key: 'Z0', label: 'Resting / Chill', color: '#ff85c0' };
+        if (bpm < 117) return { key: 'Z1', label: 'Z1: Warm-up', color: '#ff3399' };
+        if (bpm < 136) return { key: 'Z2', label: 'Z2: Normal / Active', color: '#ff1a8c' };
+        if (bpm < 156) return { key: 'Z3', label: 'Z3: Mild Panic', color: '#ff0066' };
+        if (bpm < 175) return { key: 'Z4', label: 'Z4: SVT Mode', color: '#ff2a2a' };
+        return { key: 'Z5', label: 'Z5: Severe Tachycardia', color: '#ff0000' };
+    }
+
+    // Κεντρικός χρονοδιακόπτης ανά δευτερόλεπτο
+    setInterval(() => {
+        const hasRecentSignal = (Date.now() - lastPacketTime <= 1500) && currentBpm > 0;
+
+        if ((isConnected || roomParam) && hasRecentSignal) {
+            if (roomParam) {
+                sessionSeconds++;
+                updateSessionTimerDisplay(sessionSeconds);
+            }
+
+            const weight = 85;
+            const age = 25;
+            let kcalPerMin = (-20.4022 + (0.4472 * currentBpm) - (0.1263 * weight) + (0.074 * age)) / 4.184;
+            let kcalPerSec = kcalPerMin / 60;
+            if (kcalPerSec && !roomParam) {
+                totalCalories += kcalPerSec;
+                document.getElementById('calVal').innerText = Math.floor(totalCalories);
+            }
+
+            const zone = getZoneDetails(currentBpm);
+            if (!roomParam) {
+                zoneTimeCounts[zone.key]++;
+                updateZonesBreakdownBar();
+            }
+
+            if (isConnected && !roomParam && client.connected) {
+                client.publish(mqttStateTopic, JSON.stringify({
+                    sec: sessionSeconds,
+                    hist: bpmHistory,
+                    kcal: totalCalories,
+                    max: maxBpm,
+                    zones: zoneTimeCounts
+                }));
+            }
+        }
+        drawTrendChart();
+    }, 1000);
+
+    // Throttle αποστολής ECG μέσω MQTT (Streamer)
+    setInterval(() => {
+        if (isConnected && !roomParam && client.connected && ecgPublishBuffer.length > 0) {
+            client.publish(mqttEcgTopic, JSON.stringify(ecgPublishBuffer));
+            ecgPublishBuffer = [];
+        }
+    }, 50);
+
+    function updateSessionTimerDisplay(sec) {
+        const mins = Math.floor(sec / 60);
+        const s = sec % 60;
+        document.getElementById('sessionTimer').innerText = 
+            String(mins).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    }
+
+    function updateZonesBreakdownBar() {
+        const track = document.getElementById('zonesBarTrack');
+        const total = Object.values(zoneTimeCounts).reduce((a, b) => a + b, 0);
+        if (total === 0) {
+            track.innerHTML = '<div class="zone-seg" style="width: 100%; background: #222;"></div>';
+            return;
+        }
+
+        const colors = { Z0: '#ff85c0', Z1: '#ff3399', Z2: '#ff1a8c', Z3: '#ff0066', Z4: '#ff2a2a', Z5: '#ff0000' };
+        let html = '';
+        for (let k in zoneTimeCounts) {
+            let pct = (zoneTimeCounts[k] / total) * 100;
+            if (pct > 0) {
+                html += `<div class="zone-seg" style="width: ${pct}%; background: ${colors[k]};" title="${k}: ${Math.floor(pct)}%"></div>`;
+            }
+        }
+        track.innerHTML = html;
+    }
+
+    function calculateHrvAndStress(rrMs) {
+        rrBuffer.push(rrMs);
+        if (rrBuffer.length > 20) rrBuffer.shift();
+
+        if (rrBuffer.length < 3) {
+            document.getElementById('hrvVal').innerText = '--';
+            document.getElementById('stressVal').innerText = '--';
+            return;
+        }
+
+        let sumSqDiff = 0;
+        for (let i = 1; i < rrBuffer.length; i++) {
+            let diff = rrBuffer[i] - rrBuffer[i-1];
+            sumSqDiff += (diff * diff);
+        }
+        let rmssd = Math.round(Math.sqrt(sumSqDiff / (rrBuffer.length - 1)));
+        document.getElementById('hrvVal').innerText = rmssd;
+
+        let stress = Math.max(10, Math.min(999, Math.round(10000 / (rmssd + 10))));
+        document.getElementById('stressVal').innerText = stress;
+    }
+
+    function drawTrendChart() {
+        const w = trendCanvas.width;
+        const h = trendCanvas.height;
+        trendCtx.clearRect(0, 0, w, h);
+
+        if (!isObs) {
+            trendCtx.fillStyle = '#050005';
+            trendCtx.fillRect(0, 0, w, h);
+        }
+
+        const minBpm = 45;
+        const maxBpmScale = 195;
+
+        const refLevels = [60, 100, 140, 180];
+        trendCtx.font = '10px monospace';
+        refLevels.forEach(lvl => {
+            const y = h - ((lvl - minBpm) / (maxBpmScale - minBpm)) * h;
+            trendCtx.strokeStyle = 'rgba(255, 102, 178, 0.14)';
+            trendCtx.lineWidth = 1;
+            trendCtx.beginPath();
+            trendCtx.moveTo(35, y);
+            trendCtx.lineTo(w - 10, y);
+            trendCtx.stroke();
+
+            trendCtx.fillStyle = 'rgba(255, 102, 178, 0.45)';
+            trendCtx.fillText(lvl.toString(), 6, y + 3);
+        });
+
+        trendCtx.fillStyle = 'rgba(255, 102, 178, 0.45)';
+        trendCtx.fillText('5-MIN BPM TREND', 42, 13);
+        trendCtx.fillText('Start', 40, h - 5);
+        trendCtx.textAlign = 'right';
+        trendCtx.fillText('NOW', w - 12, h - 5);
+        trendCtx.textAlign = 'left';
+
+        const plotLeft = 38;
+        const plotWidth = w - 48;
+        const stepX = plotWidth / (MAX_HISTORY - 1);
+
+        trendCtx.strokeStyle = activeLineColor;
+        trendCtx.lineWidth = 2;
+        trendCtx.shadowBlur = 6;
+        trendCtx.shadowColor = activeLineColor;
+        trendCtx.beginPath();
+
+        let started = false;
+        let firstX = null;
+        let lastX = null;
+
+        for (let i = 0; i < MAX_HISTORY; i++) {
+            const val = bpmHistory[i];
+            if (val !== null) {
+                const clamped = Math.max(minBpm, Math.min(maxBpmScale, val));
+                const x = plotLeft + i * stepX;
+                const y = h - ((clamped - minBpm) / (maxBpmScale - minBpm)) * (h - 16) - 8;
+                if (!started) {
+                    trendCtx.moveTo(x, y);
+                    started = true;
+                    firstX = x;
+                } else {
+                    trendCtx.lineTo(x, y);
+                }
+                lastX = x;
+            } else {
+                started = false;
+            }
+        }
+        trendCtx.stroke();
+        trendCtx.shadowBlur = 0;
+
+        if (firstX !== null && lastX !== null) {
+            trendCtx.lineTo(lastX, h);
+            trendCtx.lineTo(firstX, h);
+            trendCtx.closePath();
+            trendCtx.fillStyle = activeLineColor + '1F';
+            trendCtx.fill();
+        }
+    }
+
+    let audioCtx = null;
+    function playBeep() {
+        const toggle = document.getElementById('audioToggle');
+        if (!toggle || !toggle.checked || (Date.now() - lastPacketTime > 1200)) return;
+
+        try {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.08);
+        } catch (e) {
+            console.log("Audio error:", e);
+        }
+    }
+
+    client.on('connect', () => {
+        if (roomParam) {
+            document.getElementById('streamerControls').style.display = 'none';
+            document.getElementById('statusText').innerText = `Watching Stream (${streamId})... Waiting for data`;
+            client.subscribe(mqttEcgTopic);
+            client.subscribe(mqttBpmTopic);
+            client.subscribe(mqttRrTopic);
+            client.subscribe(mqttStateTopic);
+        } else {
+            document.getElementById('statusText').innerText = 'MQTT Connected - Ready to Connect Polar';
+        }
+    });
+
+    client.on('message', (topic, message) => {
+        if (roomParam) {
+            if (topic === mqttEcgTopic) {
+                try {
+                    const samples = JSON.parse(message.toString());
+                    sampleQueue.push(...samples);
+                    lastPacketTime = Date.now();
+                } catch (e) {
+                    console.error("ECG parse error:", e);
+                }
+            } else if (topic === mqttBpmTopic) {
+                updateBpmData(parseInt(message.toString()) || 0);
+                playBeep();
+            } else if (topic === mqttRrTopic) {
+                let rr = parseInt(message.toString());
+                document.getElementById('rrVal').innerText = rr;
+                calculateHrvAndStress(rr);
+            } else if (topic === mqttStateTopic) {
+                try {
+                    const state = JSON.parse(message.toString());
+                    sessionSeconds = state.sec;
+                    updateSessionTimerDisplay(sessionSeconds);
+                    bpmHistory = state.hist;
+                    totalCalories = state.kcal;
+                    document.getElementById('calVal').innerText = Math.floor(totalCalories);
+                    if (state.max > maxBpm) {
+                        maxBpm = state.max;
+                        document.getElementById('maxBpmVal').innerText = maxBpm;
+                    }
+                    zoneTimeCounts = state.zones;
+                    updateZonesBreakdownBar();
+                } catch (e) {
+                    console.error("State parse error:", e);
+                }
+            }
+        }
+    });
+
+    function updateBpmData(bpm) {
+        currentBpm = bpm;
+        const zone = getZoneDetails(currentBpm);
+        activeLineColor = zone.color;
+
+        const bpmEl = document.getElementById('bpmVal');
+        const zoneEl = document.getElementById('zoneVal');
+        const zoneBox = document.getElementById('zoneBox');
+
+        bpmEl.innerText = currentBpm;
+        bpmEl.style.color = zone.color;
+
+        zoneEl.innerText = zone.label;
+        zoneEl.style.color = zone.color;
+        if (!isObs) {
+            zoneBox.style.borderColor = currentBpm >= 136 ? zone.color : '#222';
+            canvas.style.boxShadow = `0 0 20px ${zone.color}33`;
+        }
+
+        document.getElementById('heartIcon').classList.add('beating');
+
+        if (currentBpm > maxBpm) {
+            maxBpm = currentBpm;
+            document.getElementById('maxBpmVal').innerText = maxBpm;
+        }
+
+        if (!roomParam) {
+            bpmHistory.push(currentBpm);
+            if (bpmHistory.length > MAX_HISTORY) bpmHistory.shift();
+        }
+    }
+
+    function resetStatsUI() {
+        currentBpm = 0;
+        activeLineColor = '#ff3399';
+        document.getElementById('bpmVal').innerText = '--';
+        document.getElementById('bpmVal').style.color = '#ff66b2';
+        document.getElementById('zoneVal').innerText = '--';
+        document.getElementById('zoneVal').style.color = '#ff66b2';
+        document.getElementById('zoneBox').style.borderColor = '#222';
+        document.getElementById('rrVal').innerText = '--';
+        document.getElementById('hrvVal').innerText = '--';
+        document.getElementById('stressVal').innerText = '--';
+        document.getElementById('calVal').innerText = '0';
+        document.getElementById('sessionTimer').innerText = '00:00';
+        document.getElementById('heartIcon').classList.remove('beating');
+        if (!isObs) {
+            canvas.style.boxShadow = '0 0 20px rgba(255, 102, 178, 0.15)';
+        }
+    }
+
+    async function connectPolar() {
+        try {
+            document.getElementById('statusText').innerText = 'Searching for Polar H10...';
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ namePrefix: 'Polar H10' }],
+                optionalServices: [PMD_SERVICE, HR_SERVICE]
+            });
+
+            device.addEventListener('gattserverdisconnected', onDisconnected);
+
+            document.getElementById('statusText').innerText = 'Connecting to sensor...';
+            const server = await device.gatt.connect();
+
+            const hrService = await server.getPrimaryService(HR_SERVICE);
+            const hrChar = await hrService.getCharacteristic(HR_MEASUREMENT);
+            await hrChar.startNotifications();
+            hrChar.addEventListener('characteristicvaluechanged', handleHrData);
+
+            const pmdService = await server.getPrimaryService(PMD_SERVICE);
+            const controlChar = await pmdService.getCharacteristic(PMD_CONTROL);
+            const dataChar = await pmdService.getCharacteristic(PMD_DATA);
+
+            await dataChar.startNotifications();
+            dataChar.addEventListener('characteristicvaluechanged', handleEcgData);
+            await controlChar.writeValue(START_ECG_CMD);
+
+            isConnected = true;
+            totalCalories = 0;
+            sessionSeconds = 0;
+            maxBpm = 0;
+            bpmHistory = new Array(MAX_HISTORY).fill(null);
+            zoneTimeCounts = { Z0: 0, Z1: 0, Z2: 0, Z3: 0, Z4: 0, Z5: 0 };
+            document.getElementById('maxBpmVal').innerText = '--';
+            document.getElementById('rrVal').innerText = '--';
+            document.getElementById('connectBtn').disabled = true;
+            document.getElementById('statusText').innerText = '🔴 LIVE - Medical ECG Streaming Active';
+            
+            const shareLink = `${window.location.origin}${window.location.pathname}?room=${streamId}`;
+            document.getElementById('shareUrl').value = shareLink;
+            document.getElementById('shareBox').style.display = 'block';
+
+        } catch (error) {
+            console.error(error);
+            document.getElementById('statusText').innerText = 'Error: ' + error.message;
+        }
+    }
+
+    function onDisconnected() {
+        isConnected = false;
+        sampleQueue = [];
+        document.getElementById('connectBtn').disabled = false;
+        document.getElementById('maxBpmVal').innerText = '--';
+        resetStatsUI();
+        document.getElementById('statusText').innerText = 'Disconnected';
+    }
+
+    function handleHrData(event) {
+        const value = event.target.value;
+        const flags = value.getUint8(0);
+        let offset = 1;
+        
+        let bpm = (flags & 0x1) ? value.getUint16(offset, true) : value.getUint8(offset);
+        offset += (flags & 0x1) ? 2 : 1;
+
+        if (flags & 0x8) offset += 2;
+
+        let rrValues = [];
+        if (flags & 0x10) {
+            while (offset < value.byteLength) {
+                let rawRr = value.getUint16(offset, true);
+                let rrMs = Math.round((rawRr / 1024) * 1000);
+                rrValues.push(rrMs);
+                offset += 2;
+            }
+        }
+
+        updateBpmData(bpm);
+        lastPacketTime = Date.now();
+        playBeep();
+
+        if (client.connected && !roomParam) {
+            client.publish(mqttBpmTopic, bpm.toString());
+            if (rrValues.length > 0) {
+                let latestRr = rrValues[rrValues.length - 1].toString();
+                document.getElementById('rrVal').innerText = latestRr;
+                calculateHrvAndStress(parseInt(latestRr));
+                client.publish(mqttRrTopic, latestRr);
+            }
+        }
+    }
+
+    function handleEcgData(event) {
+        const value = event.target.value;
+        const data = new Uint8Array(value.buffer);
+        if (data[0] !== 0x00) return;
+
+        let newSamples = [];
+        for (let i = 10; i < data.length; i += 3) {
+            let sample = data[i] | (data[i + 1] << 8) | (data[i + 2] << 16);
+            if (sample & 0x800000) sample |= 0xFF000000;
+            newSamples.push(sample);
+        }
+
+        sampleQueue.push(...newSamples);
+        lastPacketTime = Date.now();
+
+        if (!roomParam) {
+            ecgPublishBuffer.push(...newSamples);
+        }
+    }
+
+    function drawMonitor() {
+        ctx.fillStyle = isObs ? 'rgba(0, 0, 0, 0.2)' : '#050005';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        if (!isObs) {
+            ctx.strokeStyle = '#2d001b';
+            ctx.lineWidth = 1;
+            for (let x = 0; x < canvas.width; x += 30) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += 30) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+            }
+
+            ctx.fillStyle = 'rgba(255, 102, 178, 0.35)';
+            ctx.font = '10px monospace';
+            ctx.fillText('+2.0 mV', 8, 25);
+            ctx.fillText('+1.0 mV', 8, 85);
+            ctx.fillText(' 0.0 mV', 8, 155);
+            ctx.fillText('-1.0 mV', 8, 225);
+
+            ctx.textAlign = 'right';
+            ctx.fillText('25mm/s', canvas.width - 10, canvas.height - 10);
+            ctx.textAlign = 'left';
+        }
+
+        if (roomParam && Date.now() - lastPacketTime > 1200) {
+            sampleQueue = [];
+            resetStatsUI();
+            document.getElementById('statusText').innerText = `Watching Stream (${streamId})... Waiting for signal`;
+        } else if (roomParam && lastPacketTime > 0) {
+            document.getElementById('statusText').innerText = `🔴 LIVE - Connected to Medical Stream (${streamId})`;
+        }
+
+        for (let s = 0; s < sweepSpeed; s++) {
+            if (sampleQueue.length > 0) {
+                let val = sampleQueue.shift();
+                screenData[Math.floor(sweepCursor)] = val;
+            } else {
+                screenData[Math.floor(sweepCursor)] = 500;
+            }
+            let eraseAhead = (Math.floor(sweepCursor) + 15) % canvas.width;
+            for (let i = 0; i < 5; i++) {
+                screenData[(eraseAhead + i) % canvas.width] = null;
+            }
+            sweepCursor = (sweepCursor + 1) % canvas.width;
+        }
+
+        ctx.strokeStyle = activeLineColor;
+        ctx.lineWidth = 2.5;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = activeLineColor;
+        ctx.beginPath();
+
+        const minUv = -1500;
+        const maxUv = 2500;
+        let drawing = false;
+
+        for (let x = 0; x < canvas.width; x++) {
+            let val = screenData[x];
+            if (val !== null) {
+                const normalized = (val - minUv) / (maxUv - minUv);
+                const y = canvas.height - (normalized * canvas.height);
+                if (!drawing) {
+                    ctx.moveTo(x, y);
+                    drawing = true;
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            } else {
+                drawing = false;
+            }
+        }
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(sweepCursor, 0, 2, canvas.height);
+
+        requestAnimationFrame(drawMonitor);
+    }
+
+    function copyLink() {
+        const copyText = document.getElementById("shareUrl");
+        copyText.select();
+        navigator.clipboard.writeText(copyText.value);
+        alert("Link copied to clipboard!");
+    }
+
+    drawTrendChart();
+    drawMonitor();
+</script>
+</body>
+</html>
